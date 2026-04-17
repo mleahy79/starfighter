@@ -261,13 +261,26 @@ class Boss(pygame.sprite.Sprite):
 
 # ── PowerUp ───────────────────────────────────────────────────────────────────
 class PowerUp(pygame.sprite.Sprite):
+    SPRITES = {
+        "laser":  "powerup_laser.png",
+        "spray":  "powerup_spray.png",
+        "drone":  "powerup_drone.png",
+        "health": "health.png",
+    }
+    FALLBACK_COLORS = {
+        "laser": (0, 255, 0), "spray": (255, 255, 0),
+        "drone": (255, 0, 255), "health": (255, 255, 255),
+    }
+
     def __init__(self, x, y, kind):
         super().__init__()
         self.kind = kind
-        self.image = pygame.Surface((16, 16))
-        colors = {"laser": (0, 255, 0), "spray": (255, 255, 0),
-                  "drone": (255, 0, 255), "health": (255, 255, 255)}
-        self.image.fill(colors.get(kind, (255, 255, 255)))
+        try:
+            self.image = pygame.image.load(self.SPRITES[kind]).convert_alpha()
+            self.image = pygame.transform.scale(self.image, (40, 40))
+        except (FileNotFoundError, KeyError):
+            self.image = pygame.Surface((32, 32))
+            self.image.fill(self.FALLBACK_COLORS.get(kind, (255, 255, 255)))
         self.rect = self.image.get_rect(center=(x, y))
 
     def update(self):
