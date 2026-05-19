@@ -4,13 +4,19 @@ import random
 import math
 
 pygame.init()
+MUSIC_END = pygame.USEREVENT + 1
+pygame.mixer.music.set_endevent(MUSIC_END)
+pygame.mixer.music.load("starfighter-2- 4-25-26, 7.49 PM.mp3")
+pygame.mixer.music.set_volume(0.5)
+pygame.mixer.music.play()
+music_track = 1
 WIDTH, HEIGHT = 850, 900
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Starfighter")
 clock = pygame.time.Clock()
 star_color = (200, 200, 200)
 font = pygame.font.SysFont(None, 36)
-
+# TODO: make additional soundtracks, make hook for boss fight and underbosses, maybe different music for each underboss as well
 stars = []
 for _ in range(150):
     x = random.randint(0, WIDTH)
@@ -262,9 +268,9 @@ class Boss(pygame.sprite.Sprite):
 # ── PowerUp ───────────────────────────────────────────────────────────────────
 class PowerUp(pygame.sprite.Sprite):
     SPRITES = {
-        "laser":  "powerup_laser.png",
-        "spray":  "powerup_spray.png",
-        "drone":  "powerup_drone.png",
+        "laser":  "weapons-laser.png",
+        "spray":  "weapons-spray.png",
+        "drone":  "weapon_upgrade.png",
         "health": "health.png",
     }
     FALLBACK_COLORS = {
@@ -333,7 +339,7 @@ class Player(pygame.sprite.Sprite):
         self.shoot_cooldown = 200
         self.last_shot = 0
         self.weapon_mode = "laser"
-        self.health = 3
+        self.health = 10  # temp: testing
 
     def update(self, keys, bullet_group):
         dx = dy = 0
@@ -383,6 +389,10 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+        if event.type == MUSIC_END and music_track == 1:
+            pygame.mixer.music.load("starfight.mp3")
+            pygame.mixer.music.play(-1)
+            music_track = 2
         # TODO: replace with proper wave trigger; B key spawns boss for testing
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_b and not boss_group:
@@ -403,7 +413,17 @@ while running:
 
     if current_time - powerup_timer >= powerup_interval:
         powerup_timer = current_time
-        powerups.add(PowerUp(random.randint(40, WIDTH - 40), -16, random.choice(powerup_kinds)))
+        if player.health > 1:
+            available = [k for k in powerup_kinds if not (
+                k == "laser" and player.weapon_mode == "laser" or
+                k == "spray" and player.weapon_mode == "spray" or
+                k == "drone" and len(drones) > 0 or
+                k == "health" and player.health >= 10
+            )]
+        else:
+            available = ["health"]
+        if available:
+            powerups.add(PowerUp(random.randint(40, WIDTH - 40), -16, random.choice(available)))
 
     # Update
     keys = pygame.key.get_pressed()
@@ -416,18 +436,21 @@ while running:
     powerups.update()
     drones.update(bullets)
 
-    # Player hit by enemy ships
-    hits = pygame.sprite.spritecollide(player, enemies, True)
-    if hits:
-        player.health -= len(hits)
-        if player.health <= 0:
-            running = False
-
-    # Player hit by enemy bullets
-    if pygame.sprite.spritecollide(player, enemy_bullets, True):
+    # Player hit by enemy ships — takes 1 health
+    if pygame.sprite.spritecollide(player, enemies, True):
         player.health -= 1
         if player.health <= 0:
             running = False
+
+    # Player hit by enemy bullets — takes weapon upgrade first, then health
+    if pygame.sprite.spritecollide(player, enemy_bullets, True):
+        if player.weapon_mode != "laser" or len(drones) > 0:
+            player.weapon_mode = "laser"
+            drones.empty()
+        else:
+            player.health -= 1
+            if player.health <= 0:
+                running = False
 
     # Player bullets vs rank enemies (1 hit kill)
     for bullet in list(bullets):
@@ -458,6 +481,7 @@ while running:
             drones.add(Drone(player,  40))
         elif powerup.kind == "health":
             player.health = min(player.health + 1, 5)
+            
 
     # ── Draw ───────────────────────────────────────────────────────────────────
     screen.fill((0, 0, 0))
