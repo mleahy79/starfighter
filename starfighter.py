@@ -6,17 +6,17 @@ import math
 pygame.init()
 MUSIC_END = pygame.USEREVENT + 1
 pygame.mixer.music.set_endevent(MUSIC_END)
-pygame.mixer.music.load("starfighter-2- 4-25-26, 7.49 PM.mp3")
-pygame.mixer.music.set_volume(0.5)
-pygame.mixer.music.play()
-music_track = 1
+
 WIDTH, HEIGHT = 850, 900
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Starfighter")
 clock = pygame.time.Clock()
 star_color = (200, 200, 200)
-font = pygame.font.SysFont(None, 36)
+font       = pygame.font.SysFont(None, 36)
+font_med   = pygame.font.SysFont(None, 52)
+font_large = pygame.font.SysFont(None, 90)
 # TODO: make additional soundtracks, make hook for boss fight and underbosses, maybe different music for each underboss as well
+
 stars = []
 for _ in range(150):
     x = random.randint(0, WIDTH)
@@ -79,11 +79,14 @@ ENEMY_KINDS = {
     "r5": ("spawnr5.png", (100, 100), (1, 2), ["straight", "shuffle", "charger", "shooter"]),  # TODO: finalize r5
 }
 
+ENEMY_POINTS = {"r1": 10, "r2": 20, "r3": 30, "r4": 40, "r5": 50}
+
 class Enemy(pygame.sprite.Sprite):
     def __init__(self, x, y, player, enemy_bullets, kind=None):
         super().__init__()
         if kind is None:
             kind = random.choice(list(ENEMY_KINDS.keys()))
+        self.kind = kind
         img_file, size, speed_range, behaviors = ENEMY_KINDS[kind]
         try:
             self.image = pygame.image.load(img_file).convert_alpha()
@@ -339,14 +342,18 @@ class Player(pygame.sprite.Sprite):
         self.shoot_cooldown = 200
         self.last_shot = 0
         self.weapon_mode = "laser"
-        self.health = 10  # temp: testing
+        self.max_health = 10
+        self.health = self.max_health
 
     def update(self, keys, bullet_group):
         dx = dy = 0
-        if keys[pygame.K_LEFT]:  dx -= self.speed
-        if keys[pygame.K_RIGHT]: dx += self.speed
-        if keys[pygame.K_UP]:    dy -= self.speed
-        if keys[pygame.K_DOWN]:  dy += self.speed
+        if keys[pygame.K_LEFT]  or keys[pygame.K_a]: dx -= self.speed
+        if keys[pygame.K_RIGHT] or keys[pygame.K_d]: dx += self.speed
+        if keys[pygame.K_UP]    or keys[pygame.K_w]: dy -= self.speed
+        if keys[pygame.K_DOWN]  or keys[pygame.K_s]: dy += self.speed
+        if dx and dy:
+            dx = int(dx * 0.707)
+            dy = int(dy * 0.707)
         self.rect.x += dx
         self.rect.y += dy
         self.rect.clamp_ip(pygame.Rect(0, 0, WIDTH, HEIGHT))
@@ -365,23 +372,50 @@ class Player(pygame.sprite.Sprite):
             bullet_group.add(Bullet(self.rect.centerx, self.rect.top,  3, -10, "spray"))
 
 
-# ── Setup ──────────────────────────────────────────────────────────────────────
-player = Player(WIDTH // 2, HEIGHT - 80)
-players      = pygame.sprite.Group(player)
-bullets      = pygame.sprite.Group()
-enemy_bullets = pygame.sprite.Group()
-enemies      = pygame.sprite.Group()
-underbosses  = pygame.sprite.Group()
-boss_group   = pygame.sprite.Group()
-powerups     = pygame.sprite.Group()
-drones       = pygame.sprite.Group()
+# ── Game States ───────────────────────────────────────────────────────────────
+STATE_START    = "start"
+STATE_PLAYING  = "playing"
+STATE_GAMEOVER = "gameover"
 
-spawn_interval = 1000
-spawn_timer    = pygame.time.get_ticks()
-
+spawn_interval   = 1000
 powerup_interval = 8000
-powerup_timer    = pygame.time.get_ticks()
 powerup_kinds    = ["laser", "spray", "drone", "health"]
+
+def go_to_gameover():
+    global game_state
+    game_state = STATE_GAMEOVER
+    pygame.mixer.music.load("deathmarch - 5-19-26, 1.35 PM_1.mp3")
+    pygame.mixer.music.set_volume(0.5)
+    pygame.mixer.music.play(-1)
+
+score      = 0
+music_track = 1
+
+def reset_game():
+    global player, players, bullets, enemy_bullets, enemies, underbosses
+    global boss_group, powerups, drones, spawn_timer, powerup_timer, score, music_track
+    player        = Player(WIDTH // 2, HEIGHT - 80)
+    players       = pygame.sprite.Group(player)
+    bullets       = pygame.sprite.Group()
+    enemy_bullets = pygame.sprite.Group()
+    enemies       = pygame.sprite.Group()
+    underbosses   = pygame.sprite.Group()
+    boss_group    = pygame.sprite.Group()
+    powerups      = pygame.sprite.Group()
+    drones        = pygame.sprite.Group()
+    spawn_timer   = pygame.time.get_ticks()
+    powerup_timer = pygame.time.get_ticks()
+    score         = 0
+    music_track   = 1
+    global paused
+    paused        = False
+    pygame.mixer.music.load("starfighter-2- 4-25-26, 7.49 PM.mp3")
+    pygame.mixer.music.set_volume(0.5)
+    pygame.mixer.music.play()
+
+reset_game()
+game_state = STATE_START
+paused     = False
 
 # ── Game Loop ──────────────────────────────────────────────────────────────────
 running = True
@@ -389,124 +423,184 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-        if event.type == MUSIC_END and music_track == 1:
-            pygame.mixer.music.load("starfight.mp3")
-            pygame.mixer.music.play(-1)
-            music_track = 2
-        # TODO: replace with proper wave trigger; B key spawns boss for testing
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_b and not boss_group:
-                boss_group.add(Boss(WIDTH // 2, 130, player, enemy_bullets))
-            if event.key == pygame.K_u:
-                kind = random.randint(1, 3)
-                underbosses.add(Underboss(WIDTH // 2, -80, player, enemy_bullets, kind))
 
-    current_time = pygame.time.get_ticks()
+        if game_state == STATE_START:
+            if event.type == pygame.KEYDOWN and event.key in (pygame.K_SPACE, pygame.K_RETURN):
+                game_state = STATE_PLAYING
 
-    # Spawn a wave of 2-4 rank enemies spread across the screen
-    if current_time - spawn_timer >= spawn_interval:
-        spawn_timer = current_time
-        count = random.randint(2, 4)
-        xs = [int(WIDTH * (i + 1) / (count + 1)) for i in range(count)]
-        for x in xs:
-            enemies.add(Enemy(x + random.randint(-20, 20), -20, player, enemy_bullets))
+        elif game_state == STATE_PLAYING:
+            if event.type == pygame.ACTIVEEVENT and not event.gain:
+                paused = True
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                paused = not paused
+            if event.type == MUSIC_END and music_track == 1:
+                pygame.mixer.music.load("starfight.mp3")
+                pygame.mixer.music.play(-1)
+                music_track = 2
+            # TODO: replace with proper wave trigger; B key spawns boss for testing
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_b and not boss_group:
+                    boss_group.add(Boss(WIDTH // 2, 130, player, enemy_bullets))
+                if event.key == pygame.K_u:
+                    kind = random.randint(1, 3)
+                    underbosses.add(Underboss(WIDTH // 2, -80, player, enemy_bullets, kind))
 
-    if current_time - powerup_timer >= powerup_interval:
-        powerup_timer = current_time
-        if player.health > 1:
-            available = [k for k in powerup_kinds if not (
-                k == "laser" and player.weapon_mode == "laser" or
-                k == "spray" and player.weapon_mode == "spray" or
-                k == "drone" and len(drones) > 0 or
-                k == "health" and player.health >= 10
-            )]
-        else:
-            available = ["health"]
-        if available:
-            powerups.add(PowerUp(random.randint(40, WIDTH - 40), -16, random.choice(available)))
+        elif game_state == STATE_GAMEOVER:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:
+                    reset_game()
+                    game_state = STATE_PLAYING
+                elif event.key == pygame.K_q:
+                    running = False
 
-    # Update
-    keys = pygame.key.get_pressed()
-    player.update(keys, bullets)
-    bullets.update()
-    enemy_bullets.update()
-    enemies.update()
-    underbosses.update()
-    boss_group.update()
-    powerups.update()
-    drones.update(bullets)
-
-    # Player hit by enemy ships — takes 1 health
-    if pygame.sprite.spritecollide(player, enemies, True):
-        player.health -= 1
-        if player.health <= 0:
-            running = False
-
-    # Player hit by enemy bullets — takes weapon upgrade first, then health
-    if pygame.sprite.spritecollide(player, enemy_bullets, True):
-        if player.weapon_mode != "laser" or len(drones) > 0:
-            player.weapon_mode = "laser"
-            drones.empty()
-        else:
-            player.health -= 1
-            if player.health <= 0:
-                running = False
-
-    # Player bullets vs rank enemies (1 hit kill)
-    for bullet in list(bullets):
-        if pygame.sprite.spritecollide(bullet, enemies, True):
-            bullet.kill()
-
-    # Player bullets vs underbosses (health-based)
-    for bullet in list(bullets):
-        for ub in pygame.sprite.spritecollide(bullet, underbosses, False):
-            bullet.kill()
-            if ub.hit():
-                ub.kill()
-
-    # Player bullets vs boss (health-based)
-    for bullet in list(bullets):
-        for b in pygame.sprite.spritecollide(bullet, boss_group, False):
-            bullet.kill()
-            if b.hit():
-                b.kill()
-
-    # Player powerup collection
-    for powerup in pygame.sprite.spritecollide(player, powerups, True):
-        if powerup.kind in ("laser", "spray"):
-            player.weapon_mode = powerup.kind
-        elif powerup.kind == "drone":
-            drones.empty()
-            drones.add(Drone(player, -40))
-            drones.add(Drone(player,  40))
-        elif powerup.kind == "health":
-            player.health = min(player.health + 1, 5)
-            
-
-    # ── Draw ───────────────────────────────────────────────────────────────────
+    # Stars draw on every state
     screen.fill((0, 0, 0))
     update_stars()
     for star in stars:
         pygame.draw.circle(screen, star_color, (star[0], star[1]), 1)
 
-    enemies.draw(screen)
-    underbosses.draw(screen)
-    boss_group.draw(screen)
-    powerups.draw(screen)
-    drones.draw(screen)
-    players.draw(screen)
-    bullets.draw(screen)
-    enemy_bullets.draw(screen)
+    # ── Start Screen ──────────────────────────────────────────────────────────
+    if game_state == STATE_START:
+        title = font_large.render("STARFIGHTER", True, (0, 200, 255))
+        screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 3)))
 
-    # Health bars for underbosses and boss
-    for ub in underbosses:
-        ub.draw_health_bar(screen)
-    for b in boss_group:
-        b.draw_health_bar(screen)
+        prompt = font_med.render("Press SPACE or ENTER to play", True, (200, 200, 200))
+        screen.blit(prompt, prompt.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
 
-    # HUD
-    screen.blit(font.render(f"HP: {player.health}", True, (255, 255, 255)), (10, 10))
-    screen.blit(font.render(f"Weapon: {player.weapon_mode}", True, (200, 200, 0)), (10, 40))
+        controls = font.render("WASD / Arrow Keys  •  SPACE to shoot", True, (140, 140, 140))
+        screen.blit(controls, controls.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 60)))
+
+    # ── Playing ───────────────────────────────────────────────────────────────
+    elif game_state == STATE_PLAYING:
+        if not paused:
+            current_time = pygame.time.get_ticks()
+
+            if current_time - spawn_timer >= spawn_interval:
+                spawn_timer = current_time
+                count = random.randint(2, 4)
+                xs = [int(WIDTH * (i + 1) / (count + 1)) for i in range(count)]
+                for x in xs:
+                    enemies.add(Enemy(x + random.randint(-20, 20), -20, player, enemy_bullets))
+
+            if current_time - powerup_timer >= powerup_interval:
+                powerup_timer = current_time
+                if player.health > 1:
+                    available = [k for k in powerup_kinds if not (
+                        k == "laser" and player.weapon_mode == "laser" or
+                        k == "spray" and player.weapon_mode == "spray" or
+                        k == "drone" and len(drones) > 0 or
+                        k == "health" and player.health >= player.max_health
+                    )]
+                else:
+                    available = ["health"]
+                if available:
+                    powerups.add(PowerUp(random.randint(40, WIDTH - 40), -16, random.choice(available)))
+
+            keys = pygame.key.get_pressed()
+            player.update(keys, bullets)
+            bullets.update()
+            enemy_bullets.update()
+            enemies.update()
+            underbosses.update()
+            boss_group.update()
+            powerups.update()
+            drones.update(bullets)
+
+            # Player hit by enemy ships — takes 1 health
+            if pygame.sprite.spritecollide(player, enemies, True):
+                player.health -= 1
+                if player.health <= 0:
+                    go_to_gameover()
+
+            # Player hit by enemy bullets — takes weapon upgrade first, then health
+            if pygame.sprite.spritecollide(player, enemy_bullets, True):
+                if player.weapon_mode != "laser" or len(drones) > 0:
+                    player.weapon_mode = "laser"
+                    drones.empty()
+                else:
+                    player.health -= 1
+                    if player.health <= 0:
+                        go_to_gameover()
+
+            # Player bullets vs rank enemies (1 hit kill)
+            for bullet in list(bullets):
+                if pygame.sprite.spritecollide(bullet, enemies, True):
+                    bullet.kill()
+                    score += ENEMY_POINTS.get(bullet.kind, 10)
+
+            # Player bullets vs underbosses (health-based)
+            for bullet in list(bullets):
+                for ub in pygame.sprite.spritecollide(bullet, underbosses, False):
+                    bullet.kill()
+                    if ub.hit():
+                        ub.kill()
+                        score += 200
+
+            # Player bullets vs boss (health-based)
+            for bullet in list(bullets):
+                for b in pygame.sprite.spritecollide(bullet, boss_group, False):
+                    bullet.kill()
+                    if b.hit():
+                        b.kill()
+                        score += 1000
+
+            # Player powerup collection
+            for powerup in pygame.sprite.spritecollide(player, powerups, True):
+                if powerup.kind in ("laser", "spray"):
+                    player.weapon_mode = powerup.kind
+                elif powerup.kind == "drone":
+                    drones.empty()
+                    drones.add(Drone(player, -40))
+                    drones.add(Drone(player,  40))
+                elif powerup.kind == "health":
+                    player.health = min(player.health + 1, player.max_health)
+
+        enemies.draw(screen)
+        underbosses.draw(screen)
+        boss_group.draw(screen)
+        powerups.draw(screen)
+        drones.draw(screen)
+        players.draw(screen)
+        bullets.draw(screen)
+        enemy_bullets.draw(screen)
+
+        for ub in underbosses:
+            ub.draw_health_bar(screen)
+        for b in boss_group:
+            b.draw_health_bar(screen)
+
+        screen.blit(font.render(f"HP: {player.health}", True, (255, 255, 255)), (10, 10))
+        screen.blit(font.render(f"Weapon: {player.weapon_mode}", True, (200, 200, 0)), (10, 40))
+        screen.blit(font.render(f"Score: {score}", True, (100, 220, 255)), (10, 70))
+
+        if paused:
+            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 130))
+            screen.blit(overlay, (0, 0))
+            p_surf = font_large.render("PAUSED", True, (255, 255, 255))
+            screen.blit(p_surf, p_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 30)))
+            hint = font.render("Escape — Resume", True, (170, 170, 170))
+            screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 50)))
+
+    # ── Game Over ─────────────────────────────────────────────────────────────
+    elif game_state == STATE_GAMEOVER:
+        enemies.draw(screen)
+        underbosses.draw(screen)
+        boss_group.draw(screen)
+        players.draw(screen)
+
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 150))
+        screen.blit(overlay, (0, 0))
+
+        go_surf = font_large.render("GAME OVER", True, (220, 40, 40))
+        screen.blit(go_surf, go_surf.get_rect(center=(WIDTH // 2, HEIGHT // 3)))
+
+        score_surf = font_med.render(f"Score: {score}", True, (255, 255, 255))
+        screen.blit(score_surf, score_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
+
+        hint_surf = font.render("R — Restart    Q — Quit", True, (170, 170, 170))
+        screen.blit(hint_surf, hint_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 70)))
 
     pygame.display.flip()
     clock.tick(60)
