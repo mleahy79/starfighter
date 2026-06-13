@@ -142,7 +142,7 @@ class Enemy(pygame.sprite.Sprite):
 # ── Underbosses ───────────────────────────────────────────────────────────────
 # TODO: give each underboss a distinct attack pattern and movement style
 _UNDERBOSS_DATA = {
-    1: ("underboss1.png", (140, 140), (200, 100,   0), 10),   # (image, size, fallback color, health)
+    1: ("underboss1.png", (140, 140), (200, 100,   0), 50),   # (image, size, fallback color, health)
     2: ("underboss2.png", (150, 150), (180,   0, 200), 15),   # TODO: tune health values
     3: ("underboss3.png", (160, 160), (  0, 180, 200), 20),
 }
@@ -162,32 +162,138 @@ class Underboss(pygame.sprite.Sprite):
         self.max_health = health
         self.player = player
         self.enemy_bullets = enemy_bullets
-        self.speed = 2
-        self.tick = 0
-        self.shoot_cooldown = 1200   # TODO: tune per kind
+        self.shoot_cooldown = 900
         self.last_shot = 0
         self.kind = kind
+        if self.kind == 1:
+            self._k1_init()
 
+    # ── Kind 1 pattern ────────────────────────────────────────────────────────
+    def _k1_init(self):
+        self.k1_state      = "entering"
+        self.k1_stop       = (WIDTH // 2, HEIGHT // 2)   # center mid-screen stop point
+        self.k1_loop_r     = 160                          # loop circle radius
+        # Circle center is directly below the stop point so stop = top of circle
+        self.k1_circle_cx  = self.k1_stop[0]
+        self.k1_circle_cy  = self.k1_stop[1] + self.k1_loop_r
+        self.k1_angle      = -math.pi / 2                # angle at stop point (top of circle)
+        self.k1_loop_spd   = 0.025                       # radians per frame
+        self.k1_move_t     = 0.0                         # linear interpolation progress
+        self.k1_move_spd   = 0.007                       # progress per frame
+        self.k1_enter_spd  = 6                           # px per frame during drop
+        self.k1_fired      = False                       # burst-fire flag per loop
+        self.k1_topleft    = (80, 80)
+        self.k1_topright   = (WIDTH - 80, 80)
+        self.k1_mv_start   = (0, 0)
+        self.k1_mv_end     = (0, 0)
+
+    def _k1_lerp(self):
+        sx, sy = self.k1_mv_start
+        ex, ey = self.k1_mv_end
+        t = self.k1_move_t
+        return (int(sx + (ex - sx) * t), int(sy + (ey - sy) * t))
+
+    def _k1_start_move(self, dest, next_state):
+        self.k1_mv_start  = self.rect.center
+        self.k1_mv_end    = dest
+        self.k1_move_t    = 0.0
+        self.k1_state     = next_state
+
+    def _k1_update(self):
+        s = self.k1_state
+
+        if s == "entering":
+            ty = self.k1_stop[1]
+            if self.rect.centery < ty:
+                self.rect.centery = min(self.rect.centery + self.k1_enter_spd, ty)
+            else:
+                self.rect.center = self.k1_stop
+                self.k1_angle = -math.pi / 2
+                self.k1_fired = False
+                self.k1_state = "loop_cw"
+
+        elif s == "loop_cw":
+            self.k1_angle += self.k1_loop_spd
+            cx = self.k1_circle_cx + self.k1_loop_r * math.cos(self.k1_angle)
+            cy = self.k1_circle_cy + self.k1_loop_r * math.sin(self.k1_angle)
+            self.rect.center = (int(cx), int(cy))
+            # Full CW loop done when angle passes back through start (3π/2 = -π/2 + 2π)
+            if not self.k1_fired and self.k1_angle >= 3 * math.pi / 2:
+                self.k1_fired = True
+                self._shoot()
+                self.rect.center = self.k1_stop
+                self._k1_start_move(self.k1_topleft, "to_topleft")
+
+        elif s == "to_topleft":
+            self.k1_move_t = min(1.0, self.k1_move_t + self.k1_move_spd)
+            self.rect.center = self._k1_lerp()
+            now = pygame.time.get_ticks()
+            if now - self.last_shot >= self.shoot_cooldown:
+                self.last_shot = now
+                self._shoot()
+            if self.k1_move_t >= 1.0:
+                self._k1_start_move(self.k1_stop, "from_topleft")
+
+        elif s == "from_topleft":
+            self.k1_move_t = min(1.0, self.k1_move_t + self.k1_move_spd)
+            self.rect.center = self._k1_lerp()
+            if self.k1_move_t >= 1.0:
+                self.rect.center = self.k1_stop
+                self.k1_angle = -math.pi / 2
+                self.k1_fired = False
+                self.k1_state = "loop_ccw"
+
+        elif s == "loop_ccw":
+            self.k1_angle -= self.k1_loop_spd
+            cx = self.k1_circle_cx + self.k1_loop_r * math.cos(self.k1_angle)
+            cy = self.k1_circle_cy + self.k1_loop_r * math.sin(self.k1_angle)
+            self.rect.center = (int(cx), int(cy))
+            # Full CCW loop done when angle returns to start (-π/2 - 2π = -5π/2)
+            if not self.k1_fired and self.k1_angle <= -5 * math.pi / 2:
+                self.k1_fired = True
+                self._shoot()
+                self.rect.center = self.k1_stop
+                self._k1_start_move(self.k1_topright, "to_topright")
+
+        elif s == "to_topright":
+            self.k1_move_t = min(1.0, self.k1_move_t + self.k1_move_spd)
+            self.rect.center = self._k1_lerp()
+            now = pygame.time.get_ticks()
+            if now - self.last_shot >= self.shoot_cooldown:
+                self.last_shot = now
+                self._shoot()
+            if self.k1_move_t >= 1.0:
+                self._k1_start_move(self.k1_stop, "from_topright")
+
+        elif s == "from_topright":
+            self.k1_move_t = min(1.0, self.k1_move_t + self.k1_move_spd)
+            self.rect.center = self._k1_lerp()
+            if self.k1_move_t >= 1.0:
+                self.rect.center = self.k1_stop
+                self.k1_angle = -math.pi / 2
+                self.k1_fired = False
+                self.k1_state = "loop_cw"
+
+    # ── Shared ────────────────────────────────────────────────────────────────
     def update(self):
-        # TODO: customize movement per underboss kind — currently all patrol side-to-side
-        self.tick += 0.02
-        self.rect.x = int(WIDTH / 2 + math.sin(self.tick) * (WIDTH / 2 - 90))
-        self.rect.y += self.speed
+        if self.kind == 1:
+            self._k1_update()
+            return
+        # Placeholder for kinds 2 and 3
         if self.rect.top > HEIGHT:
             self.kill()
-            return
-        now = pygame.time.get_ticks()
-        if now - self.last_shot >= self.shoot_cooldown:
-            self.last_shot = now
-            self._shoot()
 
     def _shoot(self):
-        # TODO: customize shoot pattern per underboss kind
+        # Wide screen sweep: 9 bullets fanning from hard-left to hard-right
         cx, cy = self.rect.centerx, self.rect.bottom
-        dx = self.player.rect.centerx - cx
-        dy = self.player.rect.centery - cy
-        dist = max(1, math.hypot(dx, dy))
-        self.enemy_bullets.add(EnemyBullet(cx, cy, int(dx / dist * 5), int(dy / dist * 5)))
+        num   = 9
+        speed = 5
+        for i in range(num):
+            # angle goes from -70° to +70° relative to straight down
+            angle = math.radians(-70 + i * (140 / (num - 1)))
+            vx = int(math.sin(angle) * speed)
+            vy = int(math.cos(angle) * speed)
+            self.enemy_bullets.add(EnemyBullet(cx, cy, vx, max(1, vy)))
 
     def hit(self):
         self.health -= 1
@@ -388,12 +494,14 @@ def go_to_gameover():
     pygame.mixer.music.set_volume(0.5)
     pygame.mixer.music.play(-1)
 
-score      = 0
-music_track = 1
+score              = 0
+music_track        = 1
+underboss1_spawned = False
 
 def reset_game():
     global player, players, bullets, enemy_bullets, enemies, underbosses
     global boss_group, powerups, drones, spawn_timer, powerup_timer, score, music_track
+    global underboss1_spawned
     player        = Player(WIDTH // 2, HEIGHT - 80)
     players       = pygame.sprite.Group(player)
     bullets       = pygame.sprite.Group()
@@ -405,13 +513,19 @@ def reset_game():
     drones        = pygame.sprite.Group()
     spawn_timer   = pygame.time.get_ticks()
     powerup_timer = pygame.time.get_ticks()
-    score         = 0
-    music_track   = 1
+    score              = 0
+    music_track        = 1
+    underboss1_spawned = False
     global paused
     paused        = False
     pygame.mixer.music.load("starfighter-2- 4-25-26, 7.49 PM.mp3")
     pygame.mixer.music.set_volume(0.5)
     pygame.mixer.music.play()
+
+start_bg = pygame.transform.scale(
+    pygame.image.load("startpagestarfight.png").convert(),
+    (WIDTH, HEIGHT)
+)
 
 reset_game()
 game_state = STATE_START
@@ -442,8 +556,7 @@ while running:
                 if event.key == pygame.K_b and not boss_group:
                     boss_group.add(Boss(WIDTH // 2, 130, player, enemy_bullets))
                 if event.key == pygame.K_u:
-                    kind = random.randint(1, 3)
-                    underbosses.add(Underboss(WIDTH // 2, -80, player, enemy_bullets, kind))
+                    underbosses.add(Underboss(WIDTH // 2, -80, player, enemy_bullets, kind=1))
 
         elif game_state == STATE_GAMEOVER:
             if event.type == pygame.KEYDOWN:
@@ -461,6 +574,7 @@ while running:
 
     # ── Start Screen ──────────────────────────────────────────────────────────
     if game_state == STATE_START:
+        screen.blit(start_bg, (0, 0))
         title = font_large.render("STARFIGHTER", True, (0, 200, 255))
         screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 3)))
 
@@ -481,6 +595,10 @@ while running:
                 xs = [int(WIDTH * (i + 1) / (count + 1)) for i in range(count)]
                 for x in xs:
                     enemies.add(Enemy(x + random.randint(-20, 20), -20, player, enemy_bullets))
+
+            if score >= 6000 and not underboss1_spawned:
+                underboss1_spawned = True
+                underbosses.add(Underboss(WIDTH // 2, -80, player, enemy_bullets, kind=1))
 
             if current_time - powerup_timer >= powerup_interval:
                 powerup_timer = current_time
@@ -597,7 +715,7 @@ while running:
         screen.blit(go_surf, go_surf.get_rect(center=(WIDTH // 2, HEIGHT // 3)))
 
         score_surf = font_med.render(f"Score: {score}", True, (255, 255, 255))
-        screen.blit(score_surf, score_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
+        screen.blit(score_surf, szcore_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
 
         hint_surf = font.render("R — Restart    Q — Quit", True, (170, 170, 170))
         screen.blit(hint_surf, hint_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 70)))
