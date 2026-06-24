@@ -167,119 +167,168 @@ class Underboss(pygame.sprite.Sprite):
         self.kind = kind
         if self.kind == 1:
             self._k1_init()
+        elif self.kind == 2:
+            self._k2_init()
 
-    # ── Kind 1 pattern ────────────────────────────────────────────────────────
+    # ── Kind 1 pattern  (drop / rise / slide) ────────────────────────────────
     def _k1_init(self):
-        self.k1_state      = "entering"
-        self.k1_stop       = (WIDTH // 2, HEIGHT // 2)   # center mid-screen stop point
-        self.k1_loop_r     = 160                          # loop circle radius
-        # Circle center is directly below the stop point so stop = top of circle
-        self.k1_circle_cx  = self.k1_stop[0]
-        self.k1_circle_cy  = self.k1_stop[1] + self.k1_loop_r
-        self.k1_angle      = -math.pi / 2                # angle at stop point (top of circle)
-        self.k1_loop_spd   = 0.025                       # radians per frame
-        self.k1_move_t     = 0.0                         # linear interpolation progress
-        self.k1_move_spd   = 0.007                       # progress per frame
-        self.k1_enter_spd  = 6                           # px per frame during drop
-        self.k1_fired      = False                       # burst-fire flag per loop
-        self.k1_topleft    = (80, 80)
-        self.k1_topright   = (WIDTH - 80, 80)
-        self.k1_mv_start   = (0, 0)
-        self.k1_mv_end     = (0, 0)
-
-    def _k1_lerp(self):
-        sx, sy = self.k1_mv_start
-        ex, ey = self.k1_mv_end
-        t = self.k1_move_t
-        return (int(sx + (ex - sx) * t), int(sy + (ey - sy) * t))
-
-    def _k1_start_move(self, dest, next_state):
-        self.k1_mv_start  = self.rect.center
-        self.k1_mv_end    = dest
-        self.k1_move_t    = 0.0
-        self.k1_state     = next_state
+        self.k1_left_x      = 80
+        self.k1_mid_x       = WIDTH // 2
+        self.k1_right_x     = WIDTH - 80
+        self.k1_top_y       = self.rect.height // 2   # just fully visible at top edge
+        self.k1_bot_y       = HEIGHT // 2             # half-viewport drop target
+        self.k1_drop_spd    = 4
+        self.k1_slide_spd   = 4
+        # x positions visited in order, cycling: left→mid→right→mid→left→…
+        self.k1_x_cycle     = [80, WIDTH // 2, WIDTH - 80, WIDTH // 2]
+        self.k1_cycle_idx   = 0
+        self.k1_shoot_every = 30   # frames between spray bursts while dropping
+        self.k1_shoot_timer = 0
+        # Start just above the viewport at the left x position
+        self.rect.center    = (self.k1_x_cycle[0], -self.rect.height // 2)
+        self.k1_state       = "drop"
 
     def _k1_update(self):
         s = self.k1_state
 
+        if s == "drop":
+            self.rect.centery = min(self.rect.centery + self.k1_drop_spd, self.k1_bot_y)
+            self.k1_shoot_timer += 1
+            if self.k1_shoot_timer >= self.k1_shoot_every:
+                self.k1_shoot_timer = 0
+                self._shoot()
+            if self.rect.centery >= self.k1_bot_y:
+                self.k1_shoot_timer = 0
+                self.k1_state = "rise"
+
+        elif s == "rise":
+            self.rect.centery = max(self.rect.centery - self.k1_drop_spd, self.k1_top_y)
+            if self.rect.centery <= self.k1_top_y:
+                self.k1_cycle_idx = (self.k1_cycle_idx + 1) % len(self.k1_x_cycle)
+                self.k1_state = "slide"
+
+        elif s == "slide":
+            target_x = self.k1_x_cycle[self.k1_cycle_idx]
+            if self.rect.centerx < target_x:
+                self.rect.centerx = min(self.rect.centerx + self.k1_slide_spd, target_x)
+            elif self.rect.centerx > target_x:
+                self.rect.centerx = max(self.rect.centerx - self.k1_slide_spd, target_x)
+            if self.rect.centerx == target_x:
+                self.k1_shoot_timer = 0
+                self.k1_state = "drop"
+
+    # ── Kind 2 pattern  (circle loops + corner sweeps, was kind 1) ───────────
+    def _k2_init(self):
+        self.k2_state      = "entering"
+        self.k2_stop       = (WIDTH // 2, HEIGHT // 2)
+        self.k2_loop_r     = 160
+        self.k2_circle_cx  = self.k2_stop[0]
+        self.k2_circle_cy  = self.k2_stop[1] + self.k2_loop_r
+        self.k2_angle      = -math.pi / 2
+        self.k2_loop_spd   = 0.025
+        self.k2_move_t     = 0.0
+        self.k2_move_spd   = 0.007
+        self.k2_enter_spd  = 6
+        self.k2_fired      = False
+        self.k2_topleft    = (80, 80)
+        self.k2_topright   = (WIDTH - 80, 80)
+        self.k2_mv_start   = (0, 0)
+        self.k2_mv_end     = (0, 0)
+
+    def _k2_lerp(self):
+        sx, sy = self.k2_mv_start
+        ex, ey = self.k2_mv_end
+        t = self.k2_move_t
+        return (int(sx + (ex - sx) * t), int(sy + (ey - sy) * t))
+
+    def _k2_start_move(self, dest, next_state):
+        self.k2_mv_start  = self.rect.center
+        self.k2_mv_end    = dest
+        self.k2_move_t    = 0.0
+        self.k2_state     = next_state
+
+    def _k2_update(self):
+        s = self.k2_state
+
         if s == "entering":
-            ty = self.k1_stop[1]
+            ty = self.k2_stop[1]
             if self.rect.centery < ty:
-                self.rect.centery = min(self.rect.centery + self.k1_enter_spd, ty)
+                self.rect.centery = min(self.rect.centery + self.k2_enter_spd, ty)
             else:
-                self.rect.center = self.k1_stop
-                self.k1_angle = -math.pi / 2
-                self.k1_fired = False
-                self.k1_state = "loop_cw"
+                self.rect.center = self.k2_stop
+                self.k2_angle = -math.pi / 2
+                self.k2_fired = False
+                self.k2_state = "loop_cw"
 
         elif s == "loop_cw":
-            self.k1_angle += self.k1_loop_spd
-            cx = self.k1_circle_cx + self.k1_loop_r * math.cos(self.k1_angle)
-            cy = self.k1_circle_cy + self.k1_loop_r * math.sin(self.k1_angle)
+            self.k2_angle += self.k2_loop_spd
+            cx = self.k2_circle_cx + self.k2_loop_r * math.cos(self.k2_angle)
+            cy = self.k2_circle_cy + self.k2_loop_r * math.sin(self.k2_angle)
             self.rect.center = (int(cx), int(cy))
-            # Full CW loop done when angle passes back through start (3π/2 = -π/2 + 2π)
-            if not self.k1_fired and self.k1_angle >= 3 * math.pi / 2:
-                self.k1_fired = True
+            if not self.k2_fired and self.k2_angle >= 3 * math.pi / 2:
+                self.k2_fired = True
                 self._shoot()
-                self.rect.center = self.k1_stop
-                self._k1_start_move(self.k1_topleft, "to_topleft")
+                self.rect.center = self.k2_stop
+                self._k2_start_move(self.k2_topleft, "to_topleft")
 
         elif s == "to_topleft":
-            self.k1_move_t = min(1.0, self.k1_move_t + self.k1_move_spd)
-            self.rect.center = self._k1_lerp()
+            self.k2_move_t = min(1.0, self.k2_move_t + self.k2_move_spd)
+            self.rect.center = self._k2_lerp()
             now = pygame.time.get_ticks()
             if now - self.last_shot >= self.shoot_cooldown:
                 self.last_shot = now
                 self._shoot()
-            if self.k1_move_t >= 1.0:
-                self._k1_start_move(self.k1_stop, "from_topleft")
+            if self.k2_move_t >= 1.0:
+                self._k2_start_move(self.k2_stop, "from_topleft")
 
         elif s == "from_topleft":
-            self.k1_move_t = min(1.0, self.k1_move_t + self.k1_move_spd)
-            self.rect.center = self._k1_lerp()
-            if self.k1_move_t >= 1.0:
-                self.rect.center = self.k1_stop
-                self.k1_angle = -math.pi / 2
-                self.k1_fired = False
-                self.k1_state = "loop_ccw"
+            self.k2_move_t = min(1.0, self.k2_move_t + self.k2_move_spd)
+            self.rect.center = self._k2_lerp()
+            if self.k2_move_t >= 1.0:
+                self.rect.center = self.k2_stop
+                self.k2_angle = -math.pi / 2
+                self.k2_fired = False
+                self.k2_state = "loop_ccw"
 
         elif s == "loop_ccw":
-            self.k1_angle -= self.k1_loop_spd
-            cx = self.k1_circle_cx + self.k1_loop_r * math.cos(self.k1_angle)
-            cy = self.k1_circle_cy + self.k1_loop_r * math.sin(self.k1_angle)
+            self.k2_angle -= self.k2_loop_spd
+            cx = self.k2_circle_cx + self.k2_loop_r * math.cos(self.k2_angle)
+            cy = self.k2_circle_cy + self.k2_loop_r * math.sin(self.k2_angle)
             self.rect.center = (int(cx), int(cy))
-            # Full CCW loop done when angle returns to start (-π/2 - 2π = -5π/2)
-            if not self.k1_fired and self.k1_angle <= -5 * math.pi / 2:
-                self.k1_fired = True
+            if not self.k2_fired and self.k2_angle <= -5 * math.pi / 2:
+                self.k2_fired = True
                 self._shoot()
-                self.rect.center = self.k1_stop
-                self._k1_start_move(self.k1_topright, "to_topright")
+                self.rect.center = self.k2_stop
+                self._k2_start_move(self.k2_topright, "to_topright")
 
         elif s == "to_topright":
-            self.k1_move_t = min(1.0, self.k1_move_t + self.k1_move_spd)
-            self.rect.center = self._k1_lerp()
+            self.k2_move_t = min(1.0, self.k2_move_t + self.k2_move_spd)
+            self.rect.center = self._k2_lerp()
             now = pygame.time.get_ticks()
             if now - self.last_shot >= self.shoot_cooldown:
                 self.last_shot = now
                 self._shoot()
-            if self.k1_move_t >= 1.0:
-                self._k1_start_move(self.k1_stop, "from_topright")
+            if self.k2_move_t >= 1.0:
+                self._k2_start_move(self.k2_stop, "from_topright")
 
         elif s == "from_topright":
-            self.k1_move_t = min(1.0, self.k1_move_t + self.k1_move_spd)
-            self.rect.center = self._k1_lerp()
-            if self.k1_move_t >= 1.0:
-                self.rect.center = self.k1_stop
-                self.k1_angle = -math.pi / 2
-                self.k1_fired = False
-                self.k1_state = "loop_cw"
+            self.k2_move_t = min(1.0, self.k2_move_t + self.k2_move_spd)
+            self.rect.center = self._k2_lerp()
+            if self.k2_move_t >= 1.0:
+                self.rect.center = self.k2_stop
+                self.k2_angle = -math.pi / 2
+                self.k2_fired = False
+                self.k2_state = "loop_cw"
 
     # ── Shared ────────────────────────────────────────────────────────────────
     def update(self):
         if self.kind == 1:
             self._k1_update()
             return
-        # Placeholder for kinds 2 and 3
+        if self.kind == 2:
+            self._k2_update()
+            return
+        # kind 3 placeholder
         if self.rect.top > HEIGHT:
             self.kill()
 
